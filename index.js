@@ -194,6 +194,7 @@ if (version.version >= 7) {
 
 addData(map, codewords.concat(errorCodewords).join('').split(''));
 
+// Note: Not sure about mask code
 addMask(map);
 
 console.log(map.join('\n'));
@@ -269,8 +270,116 @@ function addFinder(map, x, y) {
 }
 
 function addMask(map) {
+    let bestMap = null;
+    let penalty = null;
     for (let i = 0; i < 8; i++) {
+        // Apply mask
+        const currentMap = map.map(row => row.slice());
+        const fn = getMaskFn(i);
+        for (let row = 0; row < currentMap.length; row++) {
+            for (let column = 0; column < currentMap[row].length; column++) {
+                if (Number.isInteger(parseInt(currentMap[row][column])) && fn(row, column)) {
+                    currentMap[row][column] = currentMap[row][column] == 1 ? 0 : 1;
+                }
+            }
+        }
+
+        // Calculate penalties
+        let currentPenalty = 0;
+
+        // Penalty 1 - 5+ same in a row
+        for (let row = 0; row < currentMap.length; row++) {
+            let currentBit = getModuleBit(currentMap[row][0]);
+            let currentCount = 1;
+            for (let column = 1; column < currentMap[row].length; column++) {
+                if (currentBit == getModuleBit(currentMap[row][column])) {
+                    currentCount++;
+                } else {
+                    currentBit = currentBit ? 0 : 1;
+                    currentCount = 1;
+                }
+
+                if (currentCount == 5) {
+                    currentPenalty += 3;
+                } else if (currentCount > 5) {
+                    currentPenalty++;
+                }
+            }
+        }
+
+        // Penalty 2 - 2x2 squares, overlapping counts
+        for (let row = 0; row < currentMap.length - 1; row++) {
+            for (let column = 0; column < currentMap[row].length - 1; column++) {
+                let currentBit = getModuleBit(currentMap[row][column]);
+                if (currentBit != getModuleBit(currentMap[row+1][column])) {
+                    continue;
+                }
+                if (currentBit != getModuleBit(currentMap[row][column+1])) {
+                    continue;
+                }
+                if (currentBit != getModuleBit(currentMap[row+1][column+1])) {
+                    continue;
+                }
+
+                currentPenalty += 3;
+            }
+        }
+
+        // Penalty 3 - "1011101" with "0000" on either side
+        for (let row = 0; row < currentMap.length - 10; row++) {
+            for (let column = 0; column < currentMap[row].length - 10; column++) {
+                const pattern1 = '10111010000';
+                const pattern2 = '00001011101';
+                let whichPattern = null;
+                let hasPattern = true;
+                for (let pIndex = 0; pIndex < pattern1.length; pIndex++) {
+                    const bit = getModuleBit(currentMap[row][column+pIndex]);
+                    if (whichPattern == null) {
+                        whichPattern = bit == 1 ? 1 : 2;
+                        continue;
+                    }
+                    if (whichPattern == 1 && bit != pattern1[pIndex]) {
+                        hasPattern = false;
+                        break;
+                    } else if (whichPattern == 2 && bit != pattern2[pIndex]) {
+                        hasPattern = false;
+                        break;
+                    }
+                }
+
+                if (hasPattern) {
+                    currentPenalty += 40;
+                }
+            }
+        }
+
+        // Penalty 4 - balance
+        const dark = currentMap.reduce((acc, row) => {
+            acc += row.reduce((_acc, column) => {
+                if (getModuleBit(column) == 1) {
+                    _acc++;
+                }
+                return _acc;
+            }, 0);
+            return acc;
+        }, 0);
+        const total = Math.pow(currentMap.length, 2);
+        const percent = parseInt(dark / total * 100);
+        const percentRemainder = percent % 5;
+        const previousMultiple = Math.abs((percent - percentRemainder) - 50);
+        const nextMultiple = Math.abs((percent + 5 - percentRemainder) - 50);
+        currentPenalty += Math.min(previousMultiple, nextMultiple) * 10;
+
+        if (bestMap == null) {
+            bestMap = currentMap;
+            penalty = currentPenalty;
+        } else if (currentPenalty < penalty) {
+            bestMap = currentMap;
+            penalty = currentPenalty;
+        }
     }
+
+    map.splice(0, map.length, ...bestMap);
 }
 
 function dividePolynomials(a, b) {
@@ -405,6 +514,29 @@ function getLogTable() {
     return table;
 }
 
+function getMaskFn(num) {
+    switch (num) {
+        case 0:
+            return (row, column) => (row + column) % 2 == 0;
+        case 1:
+            return (row, column) => row % 2 == 0;
+        case 2:
+            return (row, column) => column % 3 == 0;
+        case 3:
+            return (row, column) => (row + column) % 3 == 0;
+        case 4:
+            return (row, column) => (Math.floor(row / 2) + Math.floor(column / 3)) % 2 == 0;
+        case 5:
+            return (row, column) => ((row * column) % 2) + ((row * column) % 3) == 0;
+        case 6:
+            return (row, column) => (((row * column) % 2) + ((row * column) % 3)) % 2 == 0;
+        case 7:
+            return (row, column) => (((row + column) % 2) + ((row * column) % 3)) % 2 == 0;
+        default:
+            throw(`[getMaskFn]: Could not get fn for num ${num}`);
+    }
+}
+
 function getMultipliedPolynomials(a, b) {
     let polynomial = [];
     for (let i = 0; i < a.length + b.length - 1; i++) {
@@ -432,6 +564,16 @@ function getMultipliedPolynomials(a, b) {
     }
 
     return polynomial;
+}
+
+function getModuleBit(module) {
+    if (Number.isInteger(module)) {
+        return module;
+    }
+    if (module.match(/^[A-Z1]+$/)) {
+        return 1;
+    }
+    return 0;
 }
 
 function pad(bits, num, direction = 'left', digits = '0') {
