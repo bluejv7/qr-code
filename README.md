@@ -69,3 +69,6 @@ generateQrCode('HELLO WORLD', 'Q');
 1,0,0,0,0,0,1,0,1,1,1,0,0,1,1,1,0,0,1,1,0
 1,1,1,1,1,1,1,0,0,1,0,1,0,0,0,0,0,0,0,1,0
 ```
+
+# Credits
+Thanks to Nayuki (https://www.nayuki.io/page/creating-a-qr-code-step-by-step) and Thonky (https://www.thonky.com/qr-code-tutorial/) for the guides and info!
