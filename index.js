@@ -61,6 +61,13 @@ const ERROR_CORRECTION = [
     },
 ];
 
+const ERROR_CORRECTION_LEVEL = {
+    L: 1,
+    M: 0,
+    Q: 3,
+    H: 2,
+};
+
 const LENGTH_PAD_BITS = '1110110000010001';
 
 const ALPHANUMERIC_VALUES = {
@@ -76,128 +83,141 @@ const ANTILOG_TABLE = LOG_TABLE.reduce((acc, n, i) => {
     return acc;
 }, {});
 
-const errorCorrection = 'M';
-const phrase = 'HELLO WORLD';
-const version = VERSIONS.find(version => {
-    return phrase.length <= version[errorCorrection];
-});
+module.exports = function generateQrCode(phrase, errorCorrection = 'L') {
+    const version = VERSIONS.find(version => {
+        return phrase.length <= version[errorCorrection];
+    });
 
-if (version == null) {
-    console.error(`No version fits alphanumeric mode for error correction ${errorCorrection} and phrase ${phrase}`);
-    return;
-}
-
-// alphanumeric mode for now
-const modeIndicator = '0010';
-
-const characterCountIndicator = getCharacterCountIndicator(phrase, version.version);
-
-const encodedPhrase = getEncodedPhrase(phrase);
-
-const requiredBits = ERROR_CORRECTION[version.version - 1][errorCorrection].codewords * 8;
-
-let terminator = '';
-let currentBitLength = modeIndicator.length + characterCountIndicator.length + encodedPhrase.length;
-if (currentBitLength < requiredBits) {
-    terminator = '0'.repeat(Math.min(requiredBits - currentBitLength, 4));
-    currentBitLength += terminator.length;
-}
-
-let bytePad = '';
-const remainder = currentBitLength % 8;
-if (remainder != 0) {
-    bytePad = '0'.repeat(8 - remainder);
-    currentBitLength += bytePad.length;
-}
-
-// Note: Bits guaranteed to be multiples of 8 from this point onwards
-
-let lengthPad = '';
-if (currentBitLength < requiredBits) {
-    lengthPad = pad('', requiredBits - currentBitLength, 'right', LENGTH_PAD_BITS);
-}
-
-// TODO: Break data codewords into groups/blocks, if necessary
-
-// Generate Error codes
-const encodedData = modeIndicator + characterCountIndicator + encodedPhrase + terminator + bytePad + lengthPad;
-let codewords = [];
-for (let i = 0; i < encodedData.length; i += 8) {
-    codewords.push(encodedData.substr(i, 8));
-}
-const errorCodewords = getErrorCodewords(version, errorCorrection, codewords);
-
-// Make QR module map
-let map = Array.apply(null, Array(21 + (version.version - 1))).map(() => {
-    return Array.apply(null, Array(21 + version.version - 1)).map(() => '-');
-});
-
-const endIndex = (version.version - 1) * 4 + 21 - 7;
-
-addFinder(map, 0, 0);
-addFinder(map, endIndex, 0);
-addFinder(map, 0, endIndex);
-
-// Add separators
-for (let i = 0; i < 7; i++) {
-    map[i][7] = 's';
-    map[i][endIndex - 1] = 's';
-    map[endIndex+6-i][7] = 's';
-}
-for (let i = 0; i < 8; i++) {
-    map[7][i] = 's';
-    map[7][endIndex - 1 + i] = 's';
-    map[endIndex-1][i] = 's';
-}
-
-// TODO: Add alignment patterns
-
-// Add timing patterns
-for (let i = 8; i < endIndex - 1; i++) {
-    const val = ((i + 1) % 2) ? 'T' : 't';
-    map[6][i] = val;
-    map[i][6] = val;
-}
-
-// Add Dark module
-map[4 * version.version + 9][8] = 'D';
-
-// Reserve Format Info Area
-for (let i = 0; i < 8; i++) {
-    if (map[i][8] == '-') {
-        map[i][8] = 'R';
+    if (version == null) {
+        console.error(`No version fits alphanumeric mode for error correction ${errorCorrection} and phrase ${phrase}`);
+        return;
     }
 
-    if (map[8][i] == '-') {
-        map[8][i] = 'R';
+    // alphanumeric mode for now
+    const modeIndicator = '0010';
+
+    const characterCountIndicator = getCharacterCountIndicator(phrase, version.version);
+
+    const encodedPhrase = getEncodedPhrase(phrase);
+
+    const requiredBits = ERROR_CORRECTION[version.version - 1][errorCorrection].codewords * 8;
+
+    let terminator = '';
+    let currentBitLength = modeIndicator.length + characterCountIndicator.length + encodedPhrase.length;
+    if (currentBitLength < requiredBits) {
+        terminator = '0'.repeat(Math.min(requiredBits - currentBitLength, 4));
+        currentBitLength += terminator.length;
     }
 
-    if (map[8][endIndex-1+i] == '-') {
-        map[8][endIndex-1+i] = 'R';
+    let bytePad = '';
+    const remainder = currentBitLength % 8;
+    if (remainder != 0) {
+        bytePad = '0'.repeat(8 - remainder);
+        currentBitLength += bytePad.length;
     }
 
-    if (map[endIndex-1+i][8] == '-') {
-        map[endIndex-1+i][8] = 'R';
-    }
-}
-map[8][8] = 'R';
+    // Note: Bits guaranteed to be multiples of 8 from this point onwards
 
-// Reserve Version Info Area (if version 7+)
-if (version.version >= 7) {
-    for (let i = 0; i < 6; i++) {
-        for (let j = 0; j < 3; j++) {
-            map[i][endIndex-2-j] = 'R';
-            map[endIndex-2-j][i] = 'R';
+    let lengthPad = '';
+    if (currentBitLength < requiredBits) {
+        lengthPad = pad('', requiredBits - currentBitLength, 'right', LENGTH_PAD_BITS);
+        currentBitLength += lengthPad.length;
+    }
+
+    // TODO: Break data codewords into groups/blocks, if necessary
+
+    // Generate Error codes
+    const encodedData = modeIndicator + characterCountIndicator + encodedPhrase + terminator + bytePad + lengthPad;
+    let codewords = [];
+    for (let i = 0; i < encodedData.length; i += 8) {
+        codewords.push(encodedData.substr(i, 8));
+    }
+    const errorCodewords = getErrorCodewords(version, errorCorrection, codewords);
+
+    // Make QR module map
+    let map = Array.apply(null, Array(21 + (version.version - 1))).map(() => {
+        return Array.apply(null, Array(21 + version.version - 1)).map(() => '-');
+    });
+
+    const endIndex = (version.version - 1) * 4 + 21 - 7;
+
+    addFinder(map, 0, 0);
+    addFinder(map, endIndex, 0);
+    addFinder(map, 0, endIndex);
+
+    // Add separators
+    for (let i = 0; i < 7; i++) {
+        map[i][7] = 's';
+        map[i][endIndex - 1] = 's';
+        map[endIndex+6-i][7] = 's';
+    }
+    for (let i = 0; i < 8; i++) {
+        map[7][i] = 's';
+        map[7][endIndex - 1 + i] = 's';
+        map[endIndex-1][i] = 's';
+    }
+
+    // TODO: Add alignment patterns
+
+    // Add timing patterns
+    for (let i = 8; i < endIndex - 1; i++) {
+        const val = ((i + 1) % 2) ? 'T' : 't';
+        map[6][i] = val;
+        map[i][6] = val;
+    }
+
+    // Add Dark module
+    map[4 * version.version + 9][8] = 'D';
+
+    // Reserve Format Info Area
+    for (let i = 0; i < 8; i++) {
+        if (map[i][8] == '-') {
+            map[i][8] = 'r';
+        }
+
+        if (map[8][i] == '-') {
+            map[8][i] = 'r';
+        }
+
+        if (map[8][endIndex-1+i] == '-') {
+            map[8][endIndex-1+i] = 'r';
+        }
+
+        if (map[endIndex-1+i][8] == '-') {
+            map[endIndex-1+i][8] = 'r';
         }
     }
+    map[8][8] = 'r';
+
+    // Reserve Version Info Area (if version 7+)
+    if (version.version >= 7) {
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 3; j++) {
+                map[i][endIndex-2-j] = 'r';
+                map[endIndex-2-j][i] = 'r';
+            }
+        }
+    }
+
+    addData(map, codewords.concat(errorCodewords).join('').split(''));
+
+    // Note: Not sure about mask code logic
+    const mask = addMask(map);
+
+    insertFormatString(map, errorCorrection, mask, endIndex);
+
+    // Clean up reserved spaces in map
+    map.map(row => {
+        for (let column = 0; column < row.length; column++) {
+            if (Number.isInteger(row[column])) {
+                continue;
+            }
+            row[column] = row[column].match(/^[A-Z1]+$/) ? 1 : 0;
+        }
+    });
+
+    return map;
 }
-
-addData(map, codewords.concat(errorCodewords).join('').split(''));
-
-// Note: Not sure about mask code
-addMask(map);
-
-console.log(map.join('\n'));
 
 function addData(map, bits) {
     let isUp = true;
@@ -272,6 +292,7 @@ function addFinder(map, x, y) {
 function addMask(map) {
     let bestMap = null;
     let penalty = null;
+    let mask = null;
     for (let i = 0; i < 8; i++) {
         // Apply mask
         const currentMap = map.map(row => row.slice());
@@ -370,16 +391,16 @@ function addMask(map) {
         const nextMultiple = Math.abs((percent + 5 - percentRemainder) - 50);
         currentPenalty += Math.min(previousMultiple, nextMultiple) * 10;
 
-        if (bestMap == null) {
+        if (bestMap == null || currentPenalty < penalty) {
             bestMap = currentMap;
             penalty = currentPenalty;
-        } else if (currentPenalty < penalty) {
-            bestMap = currentMap;
-            penalty = currentPenalty;
+            mask = i;
         }
     }
 
     map.splice(0, map.length, ...bestMap);
+
+    return mask;
 }
 
 function dividePolynomials(a, b) {
@@ -415,9 +436,24 @@ function dividePolynomials(a, b) {
         remainder = result;
     }
 
+    let lastNumberIndex = -1;
+    for (let i = remainder.length - 1; i >= 0; i--) {
+        if (remainder[i] !== null && remainder[i] !== undefined) {
+            lastNumberIndex = i;
+            break;
+        }
+    }
+    if (lastNumberIndex != -1) {
+        remainder.splice(lastNumberIndex + 1);
+    }
+
     return remainder
-        .filter(codeword => codeword !== null && codeword !== undefined)
-        .map(codeword => pad(LOG_TABLE[codeword].toString(2), 8));
+        .map(codeword => {
+            if (codeword == undefined) {
+                return '0'.repeat(8);
+            }
+            return pad(LOG_TABLE[codeword].toString(2), 8)
+        });
 }
 
 // alphanumeric mode only for now
@@ -471,7 +507,7 @@ function getErrorCodewords(version, errorCorrection, codewords) {
         return ANTILOG_TABLE[parseInt(codeword, 2)];
     });
 
-    for (let i = 0; i < generatorPolynomial.length; i++) {
+    for (let i = 0; i < generatorPolynomial.length - 1; i++) {
         messagePolynomial.push(null);
     }
     while (generatorPolynomial.length < messagePolynomial.length) {
@@ -576,6 +612,55 @@ function getModuleBit(module) {
     return 0;
 }
 
+function insertFormatString(map, errorCorrection, mask, endIndex) {
+    const fiveBitFormat = pad(ERROR_CORRECTION_LEVEL[errorCorrection].toString(2), 2) + pad(mask.toString(2), 3);
+
+    let errorCorrectionBits = fiveBitFormat + '0'.repeat(10);
+    errorCorrectionBits = removeLeadingZeroes(errorCorrectionBits);
+
+    let generatorPolynomial = '10100110111';
+
+    let remainder = errorCorrectionBits;
+    let count = 0;
+    while (remainder.length > 10) {
+        const paddedGenerator = pad(generatorPolynomial, remainder.length, 'right');
+        remainder = (parseInt(remainder, 2) ^ parseInt(paddedGenerator, 2)).toString(2);
+        remainder = removeLeadingZeroes(remainder);
+
+        count++;
+        if (count > 500) {
+            break;
+        }
+    }
+    remainder = pad(remainder, 10);
+
+    const formatString = pad((parseInt(fiveBitFormat + remainder, 2) ^ parseInt('101010000010010', 2)).toString(2), 15);
+
+    // Insert format string
+    let formatIndex = 0;
+    for (let i = 0; i <= 5; i++, formatIndex++) {
+        map[8][i] = formatString[formatIndex];
+        map[map.length - 1 - i][8] = formatString[formatIndex];
+    }
+
+    map[8][7] = formatString[formatIndex];
+    map[map.length - 7][8] = formatString[formatIndex];
+    formatIndex++;
+
+    map[8][8] = formatString[formatIndex];
+    map[8][endIndex - 1] = formatString[formatIndex];
+    formatIndex++;
+
+    map[7][8] = formatString[formatIndex];
+    map[8][endIndex] = formatString[formatIndex];
+    formatIndex++;
+
+    for (let i = 9; i <= 14; i++, formatIndex++) {
+        map[14-i][8] = formatString[formatIndex];
+        map[8][endIndex + i - 8] = formatString[formatIndex];
+    }
+}
+
 function pad(bits, num, direction = 'left', digits = '0') {
     const difference = num - bits.length;
     if (difference <= 0) {
@@ -590,6 +675,11 @@ function pad(bits, num, direction = 'left', digits = '0') {
     const padBits = digits.repeat((num - bits.length) / digits.length) + subdigits;
 
     return direction == 'left' ? padBits + bits : bits + padBits;
+}
+
+function removeLeadingZeroes(bits) {
+    const oneIndex = bits.indexOf('1');
+    return oneIndex == -1 ? 0 : bits.substr(oneIndex);
 }
 
 function setMapBit(map, x, y, bits) {
