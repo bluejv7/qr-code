@@ -1,34 +1,78 @@
-// Only implementing alphanumeric mode and versions 1-4 for now
+// Only implementing alphanumeric/byte mode and versions 1-4 for now
 const VERSIONS = [
     {
         version: 1,
-        L: 25,
-        M: 20,
-        Q: 16,
-        H: 10,
+        alphanumeric: {
+            L: 25,
+            M: 20,
+            Q: 16,
+            H: 10,
+        },
+        byte: {
+            L: 17,
+            M: 14,
+            Q: 11,
+            H: 7,
+        },
     },
     {
         version: 2,
-        L: 47,
-        M: 38,
-        Q: 29,
-        H: 20,
+        alphanumeric: {
+            L: 47,
+            M: 38,
+            Q: 29,
+            H: 20,
+        },
+        byte: {
+            L: 32,
+            M: 26,
+            Q: 20,
+            H: 14,
+        },
     },
     {
         version: 3,
-        L: 77,
-        M: 61,
-        Q: 47,
-        H: 35,
+        alphanumeric: {
+            L: 77,
+            M: 61,
+            Q: 47,
+            H: 35,
+        },
+        byte: {
+            L: 53,
+            M: 42,
+            Q: 32,
+            H: 24,
+        },
     },
     {
         version: 4,
-        L: 114,
-        M: 90,
-        Q: 67,
-        H: 50,
+        alphanumeric: {
+            L: 114,
+            M: 90,
+            Q: 67,
+            H: 50,
+        },
+        byte: {
+            L: 78,
+            M: 62,
+            Q: 46,
+            H: 34,
+        },
     },
 ];
+
+const CHARACTER_COUNT_BIT_LENGTH = {
+    9: {
+        alphanumeric: 9, byte: 8,
+    },
+    26: {
+        alphanumeric: 11, byte: 16,
+    },
+    40: {
+        alphanumeric: 13, byte: 16,
+    },
+};
 
 const ERROR_CORRECTION = [
     {
@@ -83,22 +127,30 @@ const ANTILOG_TABLE = LOG_TABLE.reduce((acc, n, i) => {
     return acc;
 }, {});
 
+const ALIGNMENT_PATTERN_LOCATIONS = {
+    2: [6, 18],
+    3: [6, 22],
+    4: [6, 26],
+};
+
 module.exports = function generateQrCode(phrase, errorCorrection = 'L') {
+    const mode = getMode(phrase);
+
     const version = VERSIONS.find(version => {
-        return phrase.length <= version[errorCorrection];
+        return phrase.length <= version[mode][errorCorrection];
     });
 
     if (version == null) {
-        console.error(`No version fits alphanumeric mode for error correction ${errorCorrection} and phrase ${phrase}`);
+        console.error(`No version fits alphanumeric/byte mode for error correction ${errorCorrection} and phrase ${phrase}`);
         return;
     }
 
-    // alphanumeric mode for now
-    const modeIndicator = '0010';
+    // alphanumeric/byte mode for now
+    const modeIndicator = mode == 'alphanumeric' ? '0010' : '0100';
 
-    const characterCountIndicator = getCharacterCountIndicator(phrase, version.version);
+    const characterCountIndicator = getCharacterCountIndicator(phrase, version.version, mode);
 
-    const encodedPhrase = getEncodedPhrase(phrase);
+    const encodedPhrase = getEncodedPhrase(phrase, mode);
 
     const requiredBits = ERROR_CORRECTION[version.version - 1][errorCorrection].codewords * 8;
 
@@ -135,8 +187,8 @@ module.exports = function generateQrCode(phrase, errorCorrection = 'L') {
     const errorCodewords = getErrorCodewords(version, errorCorrection, codewords);
 
     // Make QR module map
-    let map = Array.apply(null, Array(21 + (version.version - 1))).map(() => {
-        return Array.apply(null, Array(21 + version.version - 1)).map(() => '-');
+    let map = Array.apply(null, Array(21 + (version.version - 1) * 4)).map(() => {
+        return Array.apply(null, Array(21 + (version.version - 1) * 4)).map(() => '-');
     });
 
     const endIndex = (version.version - 1) * 4 + 21 - 7;
@@ -157,7 +209,7 @@ module.exports = function generateQrCode(phrase, errorCorrection = 'L') {
         map[endIndex-1][i] = 's';
     }
 
-    // TODO: Add alignment patterns
+    addAlignmentPatterns(map, version.version);
 
     // Add timing patterns
     for (let i = 8; i < endIndex - 1; i++) {
@@ -219,6 +271,48 @@ module.exports = function generateQrCode(phrase, errorCorrection = 'L') {
     return map;
 }
 
+function addAlignmentPatterns(map, version) {
+    const locations = ALIGNMENT_PATTERN_LOCATIONS[version];
+    if (locations == null) {
+        return;
+    }
+
+    for (let i = 0; i < locations.length; i++) {
+        let isValid = true;
+        const location = locations[i];
+        for (let row = location - 2; isValid && row <= (location + 2); row++) {
+            for (let column = location - 2; column <= location + 2; column++) {
+                if (map[row][column] != '-') {
+                    isValid = false;
+                    break;
+                }
+            }
+        }
+
+        if (!isValid) {
+            continue;
+        }
+
+        // Make border
+        for (let j = location - 2; j <= location + 2; j++) {
+            map[location - 2][j] = 'A';
+            map[location + 2][j] = 'A';
+            map[j][location - 2] = 'A';
+            map[j][location + 2] = 'A';
+        }
+
+        // Inner white border
+        for (let j = location - 1; j <= location + 1; j++) {
+            map[location - 1][j] = 'a';
+            map[location + 1][j] = 'a';
+            map[j][location - 1] = 'a';
+            map[j][location + 1] = 'a';
+        }
+
+        map[location][location] = 'A';
+    }
+}
+
 function addData(map, bits) {
     let isUp = true;
     let x = map.length - 1;
@@ -252,8 +346,17 @@ function addData(map, bits) {
         }
 
         count++;
-        if (count > 500) {
+        if (count > 10000) {
             break;
+        }
+    }
+
+    // If for some reason there are still unfilled parts of the code, replace them with 0s
+    for (let i = 0; i < map.length; i++) {
+        for (let j = 0; j < map[i].length; j++) {
+            if (map[i][j] == '-') {
+                map[i][j] = '0';
+            }
         }
     }
 }
@@ -456,44 +559,58 @@ function dividePolynomials(a, b) {
         });
 }
 
-// alphanumeric mode only for now
-function getCharacterCountBitLength(version) {
+// alphanumeric/byte mode only for now
+function getCharacterCountBitLength(version, mode) {
     if (version <= 9) {
-        return 9;
+        return CHARACTER_COUNT_BIT_LENGTH[9][mode];
     }
     if (version <= 26) {
-        return 11;
+        return CHARACTER_COUNT_BIT_LENGTH[26][mode];
     }
     if (version <= 40) {
-        return 13;
+        return CHARACTER_COUNT_BIT_LENGTH[40][mode];
     }
 
     throw(`Invalid version ${version} given`);
 }
 
-function getCharacterCountIndicator(phrase, version) {
-    const bitLength = getCharacterCountBitLength(version)
+function getCharacterCountIndicator(phrase, version, mode) {
+    const bitLength = getCharacterCountBitLength(version, mode)
     return pad(phrase.length.toString(2), bitLength);
 }
 
-// alphanumeric mode only for now
-function getEncodedPhrase(phrase) {
+// alphanumeric/byte mode only for now
+function getEncodedPhrase(phrase, mode) {
     let encoded = '';
 
-    // Get pairs
-    for (let i = 0; i < phrase.length; i += 2) {
-        const pair = phrase.substr(i, 2);
-        let number;
-        let bits = '';
-        if (pair.length == 1) {
-            number = ALPHANUMERIC_VALUES[pair[0]];
-            bits = pad(number.toString(2), 6);
-        } else {
-            number = ALPHANUMERIC_VALUES[pair[0]] * 45 + ALPHANUMERIC_VALUES[pair[1]];
-            bits = pad(number.toString(2), 11);
-        }
+    if (mode == 'alphanumeric') {
+        // Get pairs
+        for (let i = 0; i < phrase.length; i += 2) {
+            const pair = phrase.substr(i, 2);
+            let number;
+            let bits = '';
+            if (pair.length == 1) {
+                number = ALPHANUMERIC_VALUES[pair[0]];
+                bits = pad(number.toString(2), 6);
+            } else {
+                number = ALPHANUMERIC_VALUES[pair[0]] * 45 + ALPHANUMERIC_VALUES[pair[1]];
+                bits = pad(number.toString(2), 11);
+            }
 
-        encoded += bits;
+            encoded += bits;
+        }
+    } else {
+        phrase = encodeURI(phrase);
+        for (let i = 0; i < phrase.length; i++) {
+            if (phrase.charAt(i) != '%') {
+                bits = pad(phrase.charCodeAt(i).toString(2), 8);
+            } else {
+                bits = pad(parseInt(phrase.substr(i + 2, 2), 2), 8);
+                i += 2;
+            }
+
+            encoded += bits;
+        }
     }
 
     return encoded;
@@ -571,6 +688,18 @@ function getMaskFn(num) {
         default:
             throw(`[getMaskFn]: Could not get fn for num ${num}`);
     }
+}
+
+function getMode(phrase) {
+    let mode = 'alphanumeric';
+    for (let i = 0; i < phrase.length; i++) {
+        if (ALPHANUMERIC_VALUES[phrase[i]] === undefined) {
+            mode = 'byte';
+            break;
+        }
+    }
+
+    return mode;
 }
 
 function getMultipliedPolynomials(a, b) {
@@ -684,6 +813,6 @@ function removeLeadingZeroes(bits) {
 
 function setMapBit(map, x, y, bits) {
     if (map[y][x] == '-') {
-        map[y][x] = bits.shift();
+        map[y][x] = bits.shift() || 0;
     }
 }
